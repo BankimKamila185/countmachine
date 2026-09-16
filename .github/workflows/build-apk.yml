@@ -5,9 +5,12 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
-    name: Build Flutter APK
+    name: Build & Release Flutter APK
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -39,3 +42,15 @@ jobs:
           name: countmachine-app-release
           path: frontend/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
+
+      - name: Publish Direct Download Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "CountMachine App Latest Release"
+          body: "🚀 Auto-built latest Android APK for CountMachine AI."
+          files: frontend/build/app/outputs/flutter-apk/app-release.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
