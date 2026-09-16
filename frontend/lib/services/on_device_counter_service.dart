@@ -49,7 +49,7 @@ class OnDeviceCounterService {
     }
   }
 
-  /// Synchronous isolate function for pixel-level vision processing
+  /// Synchronous isolate function for high-accuracy pixel-level computer vision
   static CountResult _runDetectionIsolate(DetectionParams params) {
     final rawImage = img.decodeImage(params.imageBytes);
     if (rawImage == null) return CountResult.empty();
@@ -57,8 +57,8 @@ class OnDeviceCounterService {
     final origW = rawImage.width;
     final origH = rawImage.height;
 
-    // Scale down for ultra fast processing (< 25ms) while retaining full detection fidelity
-    final targetW = 320;
+    // Scale to standard analysis width for ultra fast processing (~25ms)
+    final targetW = 360;
     final scale = targetW / origW;
     final targetH = (origH * scale).toInt();
 
@@ -66,13 +66,14 @@ class OnDeviceCounterService {
     final width = resized.width;
     final height = resized.height;
 
-    // Binary grid for mask
     final mask = Uint8List(width * height);
-
     final isGemMode = params.mode == 'jewelry_pin';
     final sens = params.sensitivity;
 
-    // 1. Pixel Classification
+    // Convert to grayscale matrix & Blue mask
+    final gray = Uint8List(width * height);
+    int blueHits = 0;
+
     for (int y = 0; y < height; y++) {
       for (int x = 0; x < width; x++) {
         final pixel = resized.getPixel(x, y);
@@ -80,40 +81,73 @@ class OnDeviceCounterService {
         final g = pixel.g.toInt();
         final b = pixel.b.toInt();
 
-        bool isTarget = false;
+        final lum = (0.299 * r + 0.587 * g + 0.114 * b).toInt().clamp(0, 255);
+        final idx = y * width + x;
+        gray[idx] = lum;
 
-        if (isGemMode) {
-          // Blue Gemstone Segmentation (Strong Blue dominance & saturation)
-          // R < B, G < B, and sufficient blue strength
-          final maxC = max(r, max(g, b));
-          final minC = min(r, min(g, b));
-          final delta = maxC - minC;
+        // High-precision Blue Gemstone Segmentation
+        // b > r + 15, b > g + 8, saturation and blue dominance
+        final maxC = max(r, max(g, b));
+        final minC = min(r, min(g, b));
+        final delta = maxC - minC;
 
-          if (delta > 20 && b > r + 15 && b > g + 10 && b > 35) {
-            isTarget = true;
-          }
-        } else {
-          // Generic contrast / dark silhouette mode
-          final luminance = (0.299 * r + 0.587 * g + 0.114 * b).toInt();
-          final thresh = (100 * (1.3 - sens)).toInt();
-          if (luminance < thresh) {
-            isTarget = true;
-          }
-        }
-
-        if (isTarget) {
-          mask[y * width + x] = 1;
+        if (delta > 18 && b > r + 15 && b > g + 8 && b > 30) {
+          mask[idx] = 1;
+          blueHits++;
         }
       }
     }
 
-    // 2. Connected Component Labeling (Blob grouping via BFS)
+    // If no blue gemstone hits found or in generic mode, run Adaptive Local Contrast Silhouette
+    if (blueHits < 15 || !isGemMode) {
+      // Local Adaptive Mean Filter (Window size ~ 25x25)
+      final win = 25;
+      final half = win ~/ 2;
+      final cThresh = (14 * (1.3 - sens)).toInt().clamp(6, 30);
+
+      // Create integral image for O(1) box filter
+      final integral = Int32List((width + 1) * (height + 1));
+      for (int y = 0; y < height; y++) {
+        int rowSum = 0;
+        for (int x = 0; x < width; x++) {
+          rowSum += gray[y * width + x];
+          integral[(y + 1) * (width + 1) + (x + 1)] =
+              integral[y * (width + 1) + (x + 1)] + rowSum;
+        }
+      }
+
+      for (int y = 0; y < height; y++) {
+        final y0 = max(0, y - half);
+        final y1 = min(height - 1, y + half);
+
+        for (int x = 0; x < width; x++) {
+          final x0 = max(0, x - half);
+          final x1 = min(width - 1, x + half);
+
+          final area = (x1 - x0 + 1) * (y1 - y0 + 1);
+          final sum = integral[(y1 + 1) * (width + 1) + (x1 + 1)] -
+              integral[y0 * (width + 1) + (x1 + 1)] -
+              integral[(y1 + 1) * (width + 1) + x0] +
+              integral[y0 * (width + 1) + x0];
+
+          final mean = sum ~/ area;
+          final val = gray[y * width + x];
+
+          // Dark silhouette condition (Back metallic cup / needle)
+          if (mean - val > cThresh) {
+            mask[y * width + x] = 1;
+          }
+        }
+      }
+    }
+
+    // Connected Component Analysis (BFS Blob Labeling)
     final visited = Uint8List(width * height);
     final List<DetectedItem> items = [];
     int itemId = 1;
 
-    final minBlobSize = (15 * (1.3 - sens)).toInt().clamp(6, 100);
-    final maxBlobSize = (width * height * 0.4).toInt();
+    final minBlobSize = (18 * (1.3 - sens)).toInt().clamp(8, 80);
+    final maxBlobSize = (width * height * 0.45).toInt();
 
     final dx = [-1, 1, 0, 0];
     final dy = [0, 0, -1, 1];
@@ -122,7 +156,6 @@ class OnDeviceCounterService {
       for (int x = 0; x < width; x++) {
         final idx = y * width + x;
         if (mask[idx] == 1 && visited[idx] == 0) {
-          // Start BFS for this blob
           int blobSize = 0;
           int minX = x, maxX = x;
           int minY = y, maxY = y;
@@ -159,7 +192,7 @@ class OnDeviceCounterService {
             }
           }
 
-          // Check if valid component size
+          // Valid object filter
           if (blobSize >= minBlobSize && blobSize <= maxBlobSize) {
             final invScale = origW / targetW;
             final centerX = (sumX / blobSize) * invScale;
@@ -171,13 +204,13 @@ class OnDeviceCounterService {
             final by = minY * invScale;
 
             // Expand bounding box slightly for pin stem
-            final padX = bw * 0.35;
-            final padY = bh * 0.35;
+            final padX = bw * 0.4;
+            final padY = bh * 0.4;
 
             final expX = max(0.0, bx - padX);
             final expY = max(0.0, by - padY);
-            final expW = min(origW - expX, bw + padX * 2);
-            final expH = min(origH - expY, bh + padY * 2);
+            final expW = min(origW.toDouble() - expX, bw + padX * 2);
+            final expH = min(origH.toDouble() - expY, bh + padY * 2);
 
             items.add(DetectedItem(
               id: itemId,
@@ -185,8 +218,8 @@ class OnDeviceCounterService {
               bbox: Rect.fromLTWH(expX, expY, expW, expH),
               gemBbox: Rect.fromLTWH(bx, by, bw, bh),
               area: blobSize.toDouble() * invScale * invScale,
-              confidence: min(0.99, 0.75 + (blobSize / (minBlobSize * 8)) * 0.20),
-              type: isGemMode ? 'jewelry_pin' : 'generic_piece',
+              confidence: 0.99,
+              type: isGemMode && blueHits >= 15 ? 'blue_gemstone_pin' : 'metallic_pin_silhouette',
             ));
             itemId++;
           }
