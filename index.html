@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CountMachine AI - Real-Time Object Counter</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
+        body { background: #0b0f19; color: #f8fafc; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 24px; }
+        .header { display: flex; align-items: center; justify-content: space-between; width: 100%; max-width: 1050px; margin-bottom: 20px; }
+        .logo-title { font-size: 24px; font-weight: 800; display: flex; align-items: center; gap: 10px; background: linear-gradient(135deg, #00FF9D, #38BDF8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .badge { background: rgba(0, 255, 157, 0.15); border: 1px solid #00FF9D; color: #00FF9D; padding: 6px 14px; border-radius: 9999px; font-weight: 700; font-size: 12px; letter-spacing: 0.5px; }
+        .container { display: grid; grid-template-columns: 1fr 360px; gap: 24px; width: 100%; max-width: 1050px; }
+        @media (max-width: 860px) { .container { grid-template-columns: 1fr; } }
+        .video-card { background: #151c2c; border: 1px solid #1e293b; border-radius: 20px; padding: 16px; position: relative; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+        .video-wrapper { position: relative; width: 100%; height: 480px; border-radius: 14px; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; }
+        video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        .stats-card { background: #151c2c; border: 1px solid #1e293b; border-radius: 20px; padding: 24px; display: flex; flex-direction: column; gap: 18px; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+        .count-display { background: linear-gradient(135deg, rgba(0,255,157,0.08), rgba(56,189,248,0.08)); border: 2px solid #00FF9D; border-radius: 16px; padding: 20px; text-align: center; }
+        .count-number { font-size: 56px; font-weight: 800; color: #00FF9D; text-shadow: 0 0 20px rgba(0,255,157,0.4); line-height: 1; }
+        .count-label { font-size: 13px; font-weight: 700; color: #94a3b8; text-transform: uppercase; margin-top: 8px; letter-spacing: 1px; }
+        .btn { background: linear-gradient(135deg, #00FF9D, #00C875); color: #000; border: none; padding: 14px 20px; border-radius: 12px; font-weight: 800; font-size: 15px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,255,157,0.3); }
+        .btn-secondary { background: #1e293b; color: white; }
+        .btn-secondary:hover { background: #334155; }
+        .control-group { display: flex; flex-direction: column; gap: 8px; }
+        .control-label { font-size: 13px; font-weight: 600; color: #94a3b8; display: flex; justify-content: space-between; }
+        input[type="range"] { accent-color: #00FF9D; width: 100%; cursor: pointer; }
+        select, input[type="text"] { background: #0f172a; border: 1px solid #334155; color: white; padding: 10px 14px; border-radius: 10px; font-size: 14px; outline: none; width: 100%; }
+        .footer-banner { margin-top: 24px; font-size: 13px; color: #64748b; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo-title">
+            <span>⚡ CountMachine</span>
+        </div>
+        <div class="badge" id="engineBadge">🟢 LIVE SCANNER</div>
+    </div>
+
+    <div class="container">
+        <div class="video-card">
+            <div class="video-wrapper">
+                <video id="webcam" autoplay playsinline muted></video>
+                <canvas id="overlayCanvas"></canvas>
+            </div>
+        </div>
+
+        <div class="stats-card">
+            <div class="count-display">
+                <div class="count-number" id="countVal">0</div>
+                <div class="count-label">PIECES DETECTED</div>
+            </div>
+
+            <button class="btn" id="startBtn" onclick="toggleCamera()">🎥 Start Camera</button>
+            <button class="btn btn-secondary" id="voiceBtn" onclick="toggleVoice()">🔊 Voice Announce: ON</button>
+
+            <div class="control-group">
+                <div class="control-label">
+                    <span>Detection Mode</span>
+                </div>
+                <select id="modeSelect">
+                    <option value="jewelry_pin">Blue Gemstone Jewelry Pin</option>
+                    <option value="generic">Generic Contrast Objects</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <div class="control-label">
+                    <span>Sensitivity</span>
+                    <span id="sensVal">50%</span>
+                </div>
+                <input type="range" id="sensRange" min="10" max="100" value="50" oninput="document.getElementById('sensVal').innerText = this.value + '%'">
+            </div>
+
+            <div class="control-group">
+                <div class="control-label">
+                    <span>Render Backend API (Optional)</span>
+                </div>
+                <input type="text" id="apiHost" placeholder="https://your-app.onrender.com">
+            </div>
+        </div>
+    </div>
+
+    <div class="footer-banner">
+        CountMachine • Real-Time AI Computer Vision Counter
+    </div>
+
+    <script>
+        let isRunning = false;
+        let voiceEnabled = true;
+        let lastAnnouncedCount = -1;
+        let lastVoiceTime = 0;
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('overlayCanvas');
+        const ctx = canvas.getContext('2d');
+        const countVal = document.getElementById('countVal');
+        const sensRange = document.getElementById('sensRange');
+        const modeSelect = document.getElementById('modeSelect');
+
+        async function toggleCamera() {
+            if (isRunning) {
+                if (video.srcObject) {
+                    video.srcObject.getTracks().forEach(t => t.stop());
+                }
+                isRunning = false;
+                document.getElementById('startBtn').innerText = '🎥 Start Camera';
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                return;
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' }
+                });
+                video.srcObject = stream;
+                await video.play();
+                isRunning = true;
+                document.getElementById('startBtn').innerText = '⏹ Stop Camera';
+                canvas.width = video.videoWidth || 640;
+                canvas.height = video.videoHeight || 480;
+                requestAnimationFrame(processFrame);
+            } catch (err) {
+                alert('Camera access error: ' + err.message);
+            }
+        }
+
+        function toggleVoice() {
+            voiceEnabled = !voiceEnabled;
+            document.getElementById('voiceBtn').innerText = voiceEnabled ? '🔊 Voice Announce: ON' : '🔇 Voice Announce: OFF';
+        }
+
+        function speak(text) {
+            if (!voiceEnabled || !('speechSynthesis' in window)) return;
+            const now = Date.now();
+            if (now - lastVoiceTime < 2500) return;
+            lastVoiceTime = now;
+            const utter = new SpeechSynthesisUtterance(text);
+            utter.rate = 1.05;
+            window.speechSynthesis.speak(utter);
+        }
+
+        // Fast Client-Side Segmentation Engine
+        function processFrame() {
+            if (!isRunning) return;
+
+            if (video.videoWidth > 0 && canvas.width !== video.videoWidth) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+            }
+
+            const w = canvas.width;
+            const h = canvas.height;
+            if (w === 0 || h === 0) {
+                requestAnimationFrame(processFrame);
+                return;
+            }
+
+            // Create downscaled processing buffer for ultra-fast 30 FPS analysis
+            const sw = 320;
+            const sh = Math.floor(h * (sw / w));
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = sw;
+            tempCanvas.height = sh;
+            const tCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+            tCtx.drawImage(video, 0, 0, sw, sh);
+            const frameData = tCtx.getImageData(0, 0, sw, sh);
+            const data = frameData.data;
+
+            const isGem = modeSelect.value === 'jewelry_pin';
+            const sens = parseInt(sensRange.value) / 100;
+            const mask = new Uint8Array(sw * sh);
+
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i], g = data[i + 1], b = data[i + 2];
+                let hit = false;
+                if (isGem) {
+                    const delta = Math.max(r, g, b) - Math.min(r, g, b);
+                    if (delta > 20 && b > r + 15 && b > g + 10 && b > 35) hit = true;
+                } else {
+                    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+                    if (lum < 100 * (1.3 - sens)) hit = true;
+                }
+                if (hit) mask[i / 4] = 1;
+            }
+
+            // Fast BFS Blob Labeling
+            const visited = new Uint8Array(sw * sh);
+            const blobs = [];
+            const minSize = Math.max(5, Math.floor(12 * (1.3 - sens)));
+
+            for (let y = 0; y < sh; y++) {
+                for (let x = 0; x < sw; x++) {
+                    const idx = y * sw + x;
+                    if (mask[idx] === 1 && visited[idx] === 0) {
+                        let size = 0, minX = x, maxX = x, minY = y, maxY = y;
+                        let sumX = 0, sumY = 0;
+                        const queue = [idx];
+                        visited[idx] = 1;
+
+                        while (queue.length > 0) {
+                            const cur = queue.pop();
+                            const cx = cur % sw;
+                            const cy = Math.floor(cur / sw);
+                            size++;
+                            sumX += cx;
+                            sumY += cy;
+                            if (cx < minX) minX = cx;
+                            if (cx > maxX) maxX = cx;
+                            if (cy < minY) minY = cy;
+                            if (cy > maxY) maxY = cy;
+
+                            const neighbors = [cur - 1, cur + 1, cur - sw, cur + sw];
+                            for (let n of neighbors) {
+                                if (n >= 0 && n < sw * sh && mask[n] === 1 && visited[n] === 0) {
+                                    visited[n] = 1;
+                                    queue.push(n);
+                                }
+                            }
+                        }
+
+                        if (size >= minSize && size <= sw * sh * 0.4) {
+                            const scale = w / sw;
+                            blobs.push({
+                                cx: (sumX / size) * scale,
+                                cy: (sumY / size) * scale,
+                                bx: minX * scale,
+                                by: minY * scale,
+                                bw: (maxX - minX + 1) * scale,
+                                bh: (maxY - minY + 1) * scale,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Render HUD and Overlays
+            ctx.clearRect(0, 0, w, h);
+            countVal.innerText = blobs.length;
+
+            blobs.forEach((b, index) => {
+                // Neon Bounding Box
+                ctx.strokeStyle = '#00FF9D';
+                ctx.lineWidth = 3;
+                ctx.shadowColor = '#00FF9D';
+                ctx.shadowBlur = 10;
+                ctx.strokeRect(b.bx, b.by, b.bw, b.bh);
+
+                // Center Pinpoint Dot
+                ctx.fillStyle = '#FF0055';
+                ctx.shadowColor = '#FF0055';
+                ctx.shadowBlur = 8;
+                ctx.beginPath();
+                ctx.arc(b.cx, b.cy, 6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Number Badge
+                ctx.fillStyle = '#00FF9D';
+                ctx.shadowBlur = 0;
+                ctx.font = 'bold 16px monospace';
+                ctx.fillText('#' + (index + 1), b.bx, Math.max(18, b.by - 6));
+            });
+
+            if (blobs.length !== lastAnnouncedCount) {
+                lastAnnouncedCount = blobs.length;
+                if (blobs.length > 0) {
+                    speak(blobs.length + (blobs.length === 1 ? ' piece' : ' pieces'));
+                }
+            }
+
+            requestAnimationFrame(processFrame);
+        }
+    </script>
+</body>
+</html>

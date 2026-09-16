@@ -1,0 +1,31 @@
+# Mac
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+backend/venv/
+backend/.venv/
+env/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Flutter / Dart
+frontend/.dart_tool/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/.packages
+frontend/build/
+frontend/.pub-cache/
+frontend/.pub/
+*.lock
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
